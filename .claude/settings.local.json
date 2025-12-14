@@ -21,7 +21,10 @@
       "Bash(git push:*)",
       "Bash(curl:*)",
       "Bash(npx drizzle-kit:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(python:*)",
+      "Bash(npm run build:*)",
+      "Bash(git rm:*)"
     ],
     "deny": [],
     "ask": []
