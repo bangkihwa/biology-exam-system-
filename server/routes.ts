@@ -1,12 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { loginSchema, submitTestSchema, submitUnitTestSchema, type UnitResult, submissions, students } from "@shared/schema";
-import { readExamDataFromSheet, writeExamDataToSheet, writeStudentResultToSheet, readResultsFromSheet, readAllResultsFromSheet } from "./googleSheets";
+import { loginSchema, submitTestSchema, submitUnitTestSchema, type UnitResult, submissions, students, units } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
-
-const SPREADSHEET_ID = "1Mi70D_RLWqSCqmlCl2t_yUfdiByF1ExXkLrn7SQcv7k";
 
 // 원문자를 숫자로 변환하는 함수
 function circleToNumber(answer: string): string {
@@ -218,25 +215,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get student submissions
+  // Get student submissions (생명과학 파트만 필터링)
   app.get("/api/submissions/:studentId", async (req, res) => {
     try {
       const { studentId } = req.params;
       const submissions = await storage.getSubmissionsByStudent(studentId);
-      
-      // Enhance with exam details
+      const biologyUnits = units as readonly string[];
+
+      // Enhance with exam details and filter biology units only
       const enrichedSubmissions = await Promise.all(
         submissions.map(async (submission) => {
           const exam = await storage.getExamById(submission.examId);
+          const allUnitResults = JSON.parse(submission.unitResults) as UnitResult[];
+
+          // 생명과학 단원만 필터링
+          const filteredUnitResults = allUnitResults.filter(ur => biologyUnits.includes(ur.unit));
+
           return {
             ...submission,
             exam,
-            unitResults: JSON.parse(submission.unitResults) as UnitResult[],
+            unitResults: filteredUnitResults,
           };
         })
       );
-      
-      return res.json(enrichedSubmissions);
+
+      // 생명과학 단원이 있는 제출만 반환
+      const biologySubmissions = enrichedSubmissions.filter(sub => sub.unitResults.length > 0);
+
+      return res.json(biologySubmissions);
     } catch (error: any) {
       return res.status(500).json({
         message: error.message || "제출 기록을 불러오는 중 오류가 발생했습니다.",
@@ -244,25 +250,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get unit statistics for an exam (평균 및 최고 성적)
+  // Get unit statistics for an exam (평균 및 최고 성적) - 생명과학 단원만
   app.get("/api/exams/:examId/unit-stats", async (req, res) => {
     try {
       const examId = parseInt(req.params.examId);
       const submissions = await storage.getSubmissionsByExam(examId);
-      
+      const biologyUnits = units as readonly string[];
+
       if (submissions.length === 0) {
         return res.json([]);
       }
 
-      // Parse all unit results
-      const allUnitResults = submissions.flatMap(sub => 
-        JSON.parse(sub.unitResults) as UnitResult[]
+      // Parse all unit results and filter biology units only
+      const allUnitResults = submissions.flatMap(sub =>
+        (JSON.parse(sub.unitResults) as UnitResult[]).filter(ur => biologyUnits.includes(ur.unit))
       );
 
       // Group by category and unit
-      const unitMap = new Map<string, { 
-        category: string; 
-        unit: string; 
+      const unitMap = new Map<string, {
+        category: string;
+        unit: string;
         scores: number[];
       }>();
 
@@ -280,11 +287,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calculate statistics
       const stats = Array.from(unitMap.values()).map(({ category, unit, scores }) => {
-        const average = scores.length > 0 
+        const average = scores.length > 0
           ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
           : 0;
         const highest = scores.length > 0 ? Math.max(...scores) : 0;
-        
+
         return {
           category,
           unit,
@@ -731,182 +738,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Upload current data to Google Sheets
-  app.post("/api/upload-to-sheets", async (req, res) => {
-    try {
-      const { spreadsheetId } = req.body;
-      
-      if (!spreadsheetId) {
-        return res.status(400).json({
-          message: "스프레드시트 ID가 필요합니다.",
-        });
-      }
-
-      console.log(`Uploading data to Google Sheets: ${spreadsheetId}`);
-
-      const allExams = await storage.getAllExams();
-      const exportData: any[] = [];
-
-      for (const exam of allExams) {
-        const questions = await storage.getQuestionsByExam(exam.id);
-        
-        for (const question of questions) {
-          // Parse answer if it's JSON (multiple answers)
-          let answer = question.answer;
-          let isMultipleAnswer = question.isMultipleAnswer;
-          
-          if (question.isMultipleAnswer) {
-            try {
-              const parsed = JSON.parse(question.answer);
-              if (Array.isArray(parsed)) {
-                answer = parsed.join(',');
-              }
-            } catch {
-              // If parsing fails, use as is
-            }
-          }
-
-          exportData.push({
-            schoolName: exam.schoolName,
-            year: exam.year,
-            semester: exam.semester,
-            questionNumber: question.questionNumber,
-            category: question.category,
-            unit: question.unit,
-            answer,
-            isMultipleAnswer,
-          });
-        }
-      }
-
-      await writeExamDataToSheet(spreadsheetId, exportData);
-
-      return res.json({
-        message: "구글 시트 업로드 완료",
-        questionCount: exportData.length,
-      });
-    } catch (error: any) {
-      console.error('Upload to sheets error:', error);
-      return res.status(500).json({
-        message: error.message || "구글 시트 업로드 중 오류가 발생했습니다.",
-      });
-    }
-  });
-
-  // Load data from Google Sheets
-  app.post("/api/load-from-sheets", async (req, res) => {
-    try {
-      const { spreadsheetId } = req.body;
-      
-      if (!spreadsheetId) {
-        return res.status(400).json({
-          message: "스프레드시트 ID가 필요합니다.",
-        });
-      }
-
-      console.log(`Loading exam data from Google Sheets: ${spreadsheetId}`);
-      
-      const sheetData = await readExamDataFromSheet(spreadsheetId);
-      
-      console.log(`Found ${sheetData.length} questions in Google Sheets`);
-
-      // Group by school and exam
-      const examMap = new Map<string, Map<string, any[]>>();
-      
-      for (const row of sheetData) {
-        if (!row.schoolName || !row.year || !row.semester) {
-          continue;
-        }
-
-        const schoolKey = row.schoolName;
-        const examKey = `${row.year}_${row.semester}`;
-        
-        if (!examMap.has(schoolKey)) {
-          examMap.set(schoolKey, new Map());
-        }
-        
-        const schoolExams = examMap.get(schoolKey)!;
-        if (!schoolExams.has(examKey)) {
-          schoolExams.set(examKey, []);
-        }
-
-        // Normalize answer format for multiple answers
-        let answer = row.answer;
-        if (row.isMultipleAnswer) {
-          const answers = answer.split(',').map((a: string) => a.trim()).filter((a: string) => a).sort();
-          answer = JSON.stringify(answers);
-        }
-        
-        schoolExams.get(examKey)!.push({
-          questionNumber: row.questionNumber,
-          type: '객관식',
-          category: row.category,
-          unit: row.unit,
-          answer,
-          isMultipleAnswer: row.isMultipleAnswer,
-        });
-      }
-
-      // Create schools and exams
-      let schoolCount = 0;
-      let questionCount = 0;
-
-      for (const [schoolName, examData] of Array.from(examMap.entries())) {
-        // Check if school already exists
-        let school = (await storage.getAllSchools()).find(s => s.name === schoolName);
-        
-        if (!school) {
-          school = await storage.createSchool({ name: schoolName });
-          schoolCount++;
-        }
-        
-        for (const [examKey, examQuestions] of Array.from(examData.entries())) {
-          const [year, semester] = examKey.split('_');
-          
-          // Check if exam already exists
-          const existingExams = await storage.getExamsBySchool(school.id);
-          let exam = existingExams.find(e => 
-            e.year === parseInt(year) && e.semester === semester
-          );
-          
-          if (!exam) {
-            exam = await storage.createExam({
-              schoolId: school.id,
-              schoolName: school.name,
-              year: parseInt(year),
-              semester,
-              subject: "통합과학",
-            });
-          }
-
-          if (examQuestions.length > 0) {
-            await storage.createManyQuestions(examQuestions.map((q: any) => ({
-              ...q,
-              examId: exam.id,
-            })));
-            questionCount += examQuestions.length;
-          }
-        }
-      }
-
-      const schools = await storage.getAllSchools();
-      const questions = await storage.getAllQuestions();
-
-      return res.json({
-        message: "구글 시트 데이터 로드 완료",
-        schoolCount: schools.length,
-        newSchools: schoolCount,
-        questionCount: questions.length,
-        newQuestions: questionCount,
-      });
-    } catch (error: any) {
-      console.error('Load from sheets error:', error);
-      return res.status(500).json({
-        message: error.message || "구글 시트 데이터 로드 중 오류가 발생했습니다.",
-      });
-    }
-  });
-
   // Admin endpoints
   const ADMIN_PASSWORD = "3721";
 
@@ -968,7 +799,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.log(`[Admin] Getting stats for unit: ${unit}`);
+      // 생명과학 단원인지 확인
+      const biologyUnits = units as readonly string[];
+      if (!biologyUnits.includes(unit)) {
+        return res.status(400).json({
+          message: "유효하지 않은 생명과학 단원입니다.",
+        });
+      }
+
+      console.log(`[Admin] Getting stats for biology unit: ${unit}`);
 
       // Get all submissions that include this unit
       const allSubmissions = await db
@@ -1073,10 +912,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (unitResultsArray && Array.isArray(unitResultsArray)) {
           for (const unitResult of unitResultsArray) {
+            // 생명과학 단원만 필터링 (units 배열에 포함된 단원만)
+            const biologyUnits = units as readonly string[];
+            if (!biologyUnits.includes(unitResult.unit)) {
+              continue; // 생명과학 단원이 아니면 스킵
+            }
+
             formattedResults.push({
               studentId: submission.studentId,
               studentName: submission.studentName || '알 수 없음',
-              textbook: unitResult.examName || '중등 과학',
+              textbook: unitResult.examName || '고등 생명과학',
               unit: unitResult.unit,
               submittedAt: submission.submittedAt,
               achievementRate: unitResult.achievementRate,
@@ -1086,48 +931,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      console.log(`[Admin] Formatted ${formattedResults.length} unit results`);
+      console.log(`[Admin] Formatted ${formattedResults.length} biology unit results`);
       return res.json(formattedResults);
     } catch (error: any) {
       console.error('Error reading results from database:', error);
       return res.status(500).json({
         message: error.message || "데이터베이스에서 성적을 불러오는 중 오류가 발생했습니다.",
-      });
-    }
-  });
-
-  // Get spreadsheet ID setting
-  app.get("/api/admin/settings/spreadsheet-id", async (req, res) => {
-    try {
-      const setting = await storage.getSetting("spreadsheet-id");
-      return res.json({ value: setting?.value || "" });
-    } catch (error: any) {
-      return res.status(500).json({
-        message: error.message || "설정을 불러오는 중 오류가 발생했습니다.",
-      });
-    }
-  });
-
-  // Update spreadsheet ID setting
-  app.post("/api/admin/settings/spreadsheet-id", async (req, res) => {
-    try {
-      const { value } = req.body;
-      
-      if (!value || typeof value !== "string") {
-        return res.status(400).json({
-          message: "구글 시트 ID를 입력해주세요.",
-        });
-      }
-
-      await storage.setSetting("spreadsheet-id", value);
-      
-      return res.json({ 
-        success: true,
-        value,
-      });
-    } catch (error: any) {
-      return res.status(500).json({
-        message: error.message || "설정 저장 중 오류가 발생했습니다.",
       });
     }
   });

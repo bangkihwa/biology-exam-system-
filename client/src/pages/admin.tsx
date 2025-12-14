@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ShieldCheck, Users, BarChart3, AlertCircle, TrendingDown, LogOut, Search, Calendar, RefreshCw, Settings2, Link as LinkIcon, Database } from "lucide-react";
+import { ShieldCheck, Users, BarChart3, AlertCircle, TrendingDown, LogOut, Search, Calendar, RefreshCw, Database } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import type { Student, TestResult } from "@shared/schema";
 import { units } from "@shared/schema";
@@ -53,7 +53,6 @@ export default function AdminPage() {
   const [selectedUnit, setSelectedUnit] = useState(units[0]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [spreadsheetIdInput, setSpreadsheetIdInput] = useState("");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -74,41 +73,6 @@ export default function AdminPage() {
   const { data: unitStats, isLoading: statsLoading } = useQuery<UnitStats>({
     queryKey: [`/api/admin/unit-stats?unit=${encodeURIComponent(selectedUnit)}`],
     enabled: !!selectedUnit,
-  });
-
-  const { data: spreadsheetSettings } = useQuery<{ value: string; source: string }>({
-    queryKey: ["/api/admin/settings/spreadsheet-id"],
-  });
-
-  useEffect(() => {
-    if (spreadsheetSettings?.value && !spreadsheetIdInput) {
-      setSpreadsheetIdInput(spreadsheetSettings.value);
-    }
-  }, [spreadsheetSettings]);
-
-  const saveSpreadsheetIdMutation = useMutation({
-    mutationFn: async (value: string) => {
-      return await apiRequest<{ success: boolean; message: string }>(
-        "POST",
-        "/api/admin/settings/spreadsheet-id",
-        { value }
-      );
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/spreadsheet-id"] });
-      toast({
-        title: "저장 완료",
-        description: data.message,
-        variant: "default",
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "저장 실패",
-        description: error.message || "설정을 저장하는 중 오류가 발생했습니다.",
-        variant: "destructive",
-      });
-    },
   });
 
   const syncStudentsMutation = useMutation({
@@ -171,18 +135,6 @@ export default function AdminPage() {
 
   const handleInitData = () => {
     initDataMutation.mutate();
-  };
-
-  const handleSaveSpreadsheetId = () => {
-    if (!spreadsheetIdInput.trim()) {
-      toast({
-        title: "입력 오류",
-        description: "구글 시트 ID를 입력해주세요.",
-        variant: "destructive",
-      });
-      return;
-    }
-    saveSpreadsheetIdMutation.mutate(spreadsheetIdInput.trim());
   };
 
   if (resultsLoading || studentsLoading) {

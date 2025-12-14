@@ -233,7 +233,7 @@ export default function ReportsPage() {
                 </div>
               </div>
               <CardTitle className="text-4xl font-bold mb-3">
-                {student.grade} | 체계적 시험 분석 및 대비 전략 리포트
+                생명과학 | 체계적 시험 분석 및 대비 전략 리포트
               </CardTitle>
               <CardDescription className="text-lg">
                 총 문항 수: <span className="font-bold text-foreground">{totalQuestions}문항</span> |
