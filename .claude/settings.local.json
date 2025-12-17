@@ -24,7 +24,12 @@
       "Bash(git init:*)",
       "Bash(python:*)",
       "Bash(npm run build:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(xcopy:*)",
+      "Bash(robocopy:*)",
+      "Bash(dir:*)",
+      "Bash(copy \"C:\\Users\\82103\\선행진도확인프로그램\\ChapterExam-biology-runji\\.env\" \"C:\\Users\\82103\\선행진도확인프로그램\\고2물리학점검\\.env\")",
+      "Bash(npx vercel:*)"
     ],
     "deny": [],
     "ask": []
